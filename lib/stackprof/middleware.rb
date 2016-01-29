@@ -17,14 +17,23 @@ module StackProf
 
     def call(env)
       enabled = Middleware.enabled?(env)
-      StackProf.start(mode: Middleware.mode, interval: Middleware.interval, raw: Middleware.raw) if enabled
+      if enabled
+        StackProf.start(mode: Middleware.mode, interval: Middleware.interval, raw: Middleware.raw)
+        start_time = Time.now.to_f
+      end
       @app.call(env)
     ensure
       if enabled
+        request_time = Time.now.to_f - start_time
         StackProf.stop
         if @num_reqs && (@num_reqs-=1) == 0
           @num_reqs = @options[:save_every]
-          Middleware.save
+
+          if @options[:save_every] == 1
+            filename = Middleware.filename_with_request(request_time, env['REQUEST_PATH'])
+          end
+
+          Middleware.save(filename)
         end
       end
     end
@@ -43,12 +52,22 @@ module StackProf
       def save(filename = nil)
         if results = StackProf.results
           FileUtils.mkdir_p(Middleware.path)
-          filename ||= "stackprof-#{results[:mode]}-#{Process.pid}-#{Time.now.to_i}.dump"
+          filename ||= default_filename
           File.open(File.join(Middleware.path, filename), 'wb') do |f|
             f.write Marshal.dump(results)
           end
           filename
         end
+      end
+
+      def filename_with_request(request_time, request_path)
+        time = (request_time * 1000).to_i
+        path = request_path.gsub(/[\/\.]/, '-')
+        "stackprof-#{Time.now.to_i}-#{Middleware.mode}-#{time}#{path}.dump"
+      end
+
+      def default_filename
+        "stackprof-#{Middleware.mode}-#{Process.pid}-#{Time.now.to_i}.dump"
       end
 
     end
